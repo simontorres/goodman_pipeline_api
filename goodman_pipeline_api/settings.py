@@ -26,7 +26,7 @@ SECRET_KEY = __secret__
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['reductionapi', 'localhost']
+ALLOWED_HOSTS = ['reductionapi', 'localhost','ctioy9.ctio.noao.edu']
 
 
 # Application definition
