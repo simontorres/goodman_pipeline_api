@@ -1,10 +1,12 @@
 from asgiref.sync import async_to_sync
 from astropy.io import fits
 from ccdproc import CCDData
+import copy
 import ccdproc
 import matplotlib.pyplot as plt
 import glob
 import json
+import logging
 import re
 import os
 import numpy as np
@@ -13,7 +15,6 @@ import time
 from channels.layers import get_channel_layer
 from django.db import IntegrityError
 from django.core import serializers
-
 
 from ccdproc import ImageFileCollection
 
@@ -65,7 +66,9 @@ KEYWORDS = ['OBSTYPE',
             'GAIN',
             'ROI']
 
-setup_logging()
+setup_logging(debug=True)
+
+log = logging.getLogger(__name__)
 
 
 def add_trace_info(ccd, trace_info):
@@ -140,59 +143,75 @@ def auto_discover_files(full_path, file_type):
             return flat_list
 
     else:
-        raise FileNotFoundError
+        raise FileNotFoundError('File {} does not exist'.format(full_path))
 
 
-def find_matching_calibration(full_path, calibration_type, search_path):
-    if os.path.isdir(os.path.dirname(full_path)) and os.path.exists(full_path):
-        if not os.path.isabs(full_path):
-            full_path = os.path.abspath(full_path)
-
-        header = fits.getheader(full_path)
-        ifc = ImageFileCollection(location=os.path.abspath(search_path),
-                                  keywords=KEYWORDS)
-        pd_ifc = ifc.summary.to_pandas()
-
-        if calibration_type == 'BIAS':
-            filtered = pd_ifc[
-                ((pd_ifc['OBSTYPE'] == calibration_type) &
-                 (pd_ifc['GAIN'] == header['GAIN']) &
-                 (pd_ifc['RDNOISE'] == header['RDNOISE']) &
-                 (pd_ifc['ROI'] == header['ROI'])
-                 )]
-            bias_list = filtered.file.tolist()
-
-            if len(bias_list) == 1:
-                return bias_list[0]
-            elif len(bias_list) > 1:
-                return bias_list[-1]
-            else:
-                raise FileNotFoundError
-
-        elif calibration_type == 'FLAT':
-            filtered = pd_ifc[
-                (((pd_ifc['OBSTYPE'] == 'LAMPFLAT') |
-                  (pd_ifc['OBSTYPE'] == 'FLAT')) &
-                 (pd_ifc['FILTER'] == header['FILTER']) &
-                 (pd_ifc['FILTER2'] == header['FILTER2']) &
-                 (pd_ifc['GRATING'] == header['GRATING']) &
-                 (pd_ifc['SLIT'] == header['SLIT']) &
-                 (pd_ifc['CAM_TARG'] == header['CAM_TARG']) &
-                 (pd_ifc['GRT_TARG'] == header['GRT_TARG']) &
-                 (pd_ifc['GAIN'] == header['GAIN']) &
-                 (pd_ifc['RDNOISE'] == header['RDNOISE']) &
-                 (pd_ifc['ROI'] == header['ROI'])
-                 )]
-            flat_list = filtered.file.tolist()
-            if len(flat_list) == 1:
-                return flat_list[0]
-            elif len(flat_list) > 1:
-                return flat_list[-1]
-            else:
-                raise FileNotFoundError
-
-    else:
-        raise FileNotFoundError
+# def find_matching_calibration(full_path, calibration_type, search_path):
+#     log.debug("Full Path: {} Calibration Type: {} Search Path: {}".format(
+#         full_path,
+#         calibration_type,
+#         search_path))
+#     if os.path.isdir(os.path.dirname(full_path)) and os.path.exists(full_path):
+#         if not os.path.isabs(full_path):
+#             full_path = os.path.abspath(full_path)
+#
+#         header = fits.getheader(full_path)
+#         ifc = ImageFileCollection(location=os.path.abspath(search_path),
+#                                   keywords=KEYWORDS)
+#
+#         pd_ifc = ifc.summary.to_pandas()
+#
+#         if calibration_type == 'BIAS':
+#             filtered = pd_ifc[
+#                 ((pd_ifc['OBSTYPE'] == calibration_type) &
+#                  (pd_ifc['GAIN'] == header['GAIN']) &
+#                  (pd_ifc['RDNOISE'] == header['RDNOISE']) &
+#                  (pd_ifc['ROI'] == header['ROI'])
+#                  )]
+#             bias_list = filtered.file.tolist()
+#             print(bias_list)
+#
+#
+#             if len(bias_list) == 1:
+#                 return bias_list[0]
+#             elif len(bias_list) > 1:
+#                 return bias_list[-1]
+#
+#             else:
+#                 raise FileNotFoundError("Master bias not found for {}".format(
+#                     os.path.basename(full_path)))
+#
+#         elif calibration_type == 'FLAT':
+#             filtered = pd_ifc[
+#                 (((pd_ifc['OBSTYPE'] == 'LAMPFLAT') |
+#                   (pd_ifc['OBSTYPE'] == 'FLAT')) &
+#                  (pd_ifc['FILTER'] == header['FILTER']) &
+#                  (pd_ifc['FILTER2'] == header['FILTER2']) &
+#                  (pd_ifc['GRATING'] == header['GRATING']) &
+#                  (pd_ifc['SLIT'] == header['SLIT']) &
+#                  (pd_ifc['CAM_TARG'] == header['CAM_TARG']) &
+#                  (pd_ifc['GRT_TARG'] == header['GRT_TARG']) &
+#                  (pd_ifc['GAIN'] == header['GAIN']) &
+#                  (pd_ifc['RDNOISE'] == header['RDNOISE']) &
+#                  (pd_ifc['ROI'] == header['ROI'])
+#                  )]
+#             flat_list = filtered.file.tolist()
+#
+#             print("FLAT LIOST")
+#             print(flat_list)
+#             if len(flat_list) == 1:
+#                 return flat_list[0]
+#             elif len(flat_list) == 2:
+#                 for master in flat_list:
+#                     if 'norm_master' in master:
+#                         return master
+#             else:
+#                 raise FileNotFoundError("Master flat not found for {}".format(
+#                     os.path.basename(full_path)))
+#
+#     else:
+#         raise FileNotFoundError("Reference File {} does not exist".formata(
+#             os.path.basename(full_path)))
 
 
 class ApiView(APIView):
@@ -202,245 +221,298 @@ class ApiView(APIView):
 
 
 class ApiCalibrationsBiasView(APIView):
-    
-    def get(self, request):
-        file_name = request.GET.get('file', '')
-        raw_data_path = request.GET.get('raw_data_path')
-        reduced_data_path = request.GET.get('reduced_data_path')
 
-        if file_name != '':
-            file_full_path = os.path.join(reduced_data_path, file_name)
-            if os.path.exists(file_full_path):
-                try:
-                    master_bias_file = find_matching_calibration(
-                        full_path=file_full_path,
-                        calibration_type='BIAS',
-                        search_path=reduced_data_path)
-
-                    return Response({
-                        'api_version': __version__,
-                        'pipeline_version': goodman_pipeline.__version__,
-                        "master_bias": master_bias_file})
-                except FileNotFoundError:
-                    return Response({
-                        'api_version': __version__,
-                        'pipeline_version': goodman_pipeline.__version__,
-                        'error': 'No master bias was found for {}'
-                                 ''.format(file_name)})
-
-            else:
-                return Response({
-                    'api_version': __version__,
-                    'pipeline_version': goodman_pipeline.__version__,
-                    "error": "File {} not found".format(file_name)},
-                    status=status.HTTP_404_NOT_FOUND)
-        else:
-
-            all_master_bias = auto_discover_files(full_path=reduced_data_path,
-                                                  file_type='BIAS')
-            if len(all_master_bias) == 1:
-                return Response({
-                    'api_version': __version__,
-                    'pipeline_version': goodman_pipeline.__version__,
-                    'master_bias': all_master_bias})
-            else:
-                return Response({
-                    'api_version': __version__,
-                    'pipeline_version': goodman_pipeline.__version__,
-                    'error': "Unable to find master bias files"})
+    response_payload = {
+        'api_version': __version__,
+        'pipeline_version': goodman_pipeline.__version__,
+        'request_data': '',
+        'error': '',
+        'master_bias': ''}
+    #
+    # def get(self, request):
+    #     response_payload = copy.deepcopy(self.response_payload)
+    #     file_name = request.GET.get('file_name', '')
+    #     raw_data_path = request.GET.get('raw_data_path')
+    #     reduced_data_path = request.GET.get('reduced_data_path')
+    #
+    #     response_payload['request_data'] = {
+    #         'file_name': file_name,
+    #         'raw_data_path': raw_data_path,
+    #         'reduced_data_path': reduced_data_path}
+    #
+    #     if file_name != '':
+    #         try:
+    #             raw_full_path = os.path.join(raw_data_path, file_name)
+    #             reduced_full_path = os.path.join(reduced_data_path,
+    #                                              file_name)
+    #             file_full_path = next(
+    #                 path for path in [raw_full_path, reduced_full_path] if
+    #                 os.path.isfile(path))
+    #
+    #             master_bias_file = find_matching_calibration(
+    #                 full_path=file_full_path,
+    #                 calibration_type='BIAS',
+    #                 search_path=reduced_data_path)
+    #             print(master_bias_file)
+    #             response_payload['master_bias'] = master_bias_file
+    #
+    #             return Response(response_payload)
+    #         except FileNotFoundError as error:
+    #             response_payload['error'] = str(error)
+    #             return Response(response_payload,
+    #                             status=status.HTTP_404_NOT_FOUND)
+    #         except StopIteration:
+    #             response_payload['error'] = "File {} not found".format(
+    #                 file_name)
+    #             return Response(response_payload,
+    #                             status=status.HTTP_404_NOT_FOUND)
+    #     else:
+    #
+    #         all_master_bias = auto_discover_files(full_path=reduced_data_path,
+    #                                               file_type='BIAS')
+    #         if len(all_master_bias) == 1:
+    #             response_payload['master_bias'] = all_master_bias
+    #             return Response(response_payload)
+    #         else:
+    #             response_payload['error'] = "Unable to find master bias files"
+    #             return Response(response_payload,
+    #                             status=status.HTTP_404_NOT_FOUND)
 
     def post(self, request):
-        auto_discover = request.data.get('auto_discover')
+        response_payload = copy.deepcopy(self.response_payload)
+        auto_discover = request.data.get('auto_discover', 'true')
         raw_data_path = request.data.get('raw_data_path')
         reduced_data_path = request.data.get('reduced_data_path')
-        overscan_region = request.data.get('overscan_region')
-        trim_section = request.data.get('trim_section')
+        file_list = request.data.get('file_list', [])
+        technique = request.data.get('technique')
+
+        response_payload['request_data'] = {
+            'auto_discover': auto_discover,
+            'raw_data_path': raw_data_path,
+            'reduced_data_path': reduced_data_path,
+            'file_list': file_list,
+            'technique': technique}
 
         if auto_discover == 'true':
             try:
                 file_list = auto_discover_files(full_path=raw_data_path,
                                                 file_type='BIAS')
-            except FileNotFoundError:
-                response_payload = {
-                    'api_version': __version__,
-                    'pipeline_version': goodman_pipeline.__version__,
-                    'error': 'Directory {} could not '
-                             'be found'.format(raw_data_path)}
+            except FileNotFoundError as error:
+                response_payload['error'] = str(error)
                 return Response(response_payload,
                                 status=status.HTTP_404_NOT_FOUND)
-        else:
-            file_list = request.data.get('file_list')
-
         if file_list != []:
             all_master_bias = []
             for sub_list in file_list:
                 if isinstance(sub_list, list):
+                    print("is a list ")
                     start_time = time.time()
-                    if overscan_region == "" or trim_section == "":
-                        sample_file = os.path.join(raw_data_path, sub_list[0])
-
-                        if trim_section == "":
-                            trim_section = define_trim_section(
-                                sample_image=sample_file,
-                                technique='Spectroscopy')
-
-                        if overscan_region == "":
-                            overscan_region = get_overscan_region(
-                                sample_image=sample_file,
-                                technique="Spectroscopy")
                     master_bias, master_bias_name = create_master_bias(
                         bias_files=sub_list,
                         raw_data=raw_data_path,
                         reduced_data=reduced_data_path,
-                        technique='Spectroscopy',
-                        overscan_region=overscan_region,
-                        trim_section=trim_section)
+                        technique=technique)
                     elapsed = time.time() - start_time
 
-                    bias_name = re.sub('.fits', '', os.path.basename(master_bias_name))
-
-                    all_master_bias.append({bias_name: {
+                    all_master_bias.append({
+                        'parent_file': os.path.basename(master_bias_name),
                         'file_name': os.path.basename(master_bias_name),
-                        'full_path': os.path.dirname(master_bias_name),
+                        'full_path': os.path.join(reduced_data_path,
+                                                  master_bias_name),
                         'file_list': sub_list,
-                        'elapsed_time': elapsed}})
+                        'elapsed_time': elapsed})
+                else:
+                    print("not a list")
+                    print(dir(sub_list))
 
-            response_payload = {
-                'api_version': __version__,
-                'pipeline_version': goodman_pipeline.__version__,
-                'master_bias': all_master_bias}
+            response_payload['master_bias'] = all_master_bias
 
             return Response(response_payload)
         else:
-            return Response({
-                'api_version': __version__,
-                'pipeline_version': goodman_pipeline.__version__,
-                'error': "Unable to create master flats"})
+            response_payload['error'] = 'List of files is empty'
+            return Response(response_payload)
 
 
 class ApiCalibrationsFlatsView(APIView):
+    response_payload = {
+        'api_version': __version__,
+        'pipeline_version': goodman_pipeline.__version__,
+        'request_data': '',
+        'error': '',
+        'master_flats': ''}
 
-    def get(self, request):
-
-        sample_file = request.GET.get('file', '')
-        raw_data_path = request.GET.get('raw_data_path', '')
-        reduced_data_path = request.GET.get('reduced_data_path', '')
-
-        if sample_file != '':
-            full_path = os.path.join(raw_data_path, sample_file)
-            if os.path.exists(full_path):
-                master_flat_file = find_matching_calibration(
-                    full_path=full_path,
-                    calibration_type='FLAT',
-                    search_path=reduced_data_path)
-
-                return Response({
-                    'api_version': __version__,
-                    'pipeline_version': goodman_pipeline.__version__,
-                    'master_flat': master_flat_file})
-
-            else:
-                return Response({
-                    'api_version': __version__,
-                    'pipeline_version': goodman_pipeline.__version__,
-                    'error': 'File {} does not exist'.format(sample_file)})
-        else:
-            all_flats = auto_discover_files(full_path=reduced_data_path,
-                                            file_type='FLAT')
-
-        return Response({'api_version': __version__,
-                         'pipeline_version': goodman_pipeline.__version__,
-                         'master_flat': all_flats})
+    # def get(self, request):
+    #     response_payload = copy.deepcopy(self.response_payload)
+    #
+    #     file_full_path = request.GET.get('file_full_path', '')
+    #     reduced_data_path = request.GET.get('reduced_data_path', '')
+    #     master_bias_file = request.GET.get('master_bias_file')
+    #     response_payload['request_data'] = {
+    #         'file_full_path': file_full_path,
+    #         'reduced_data_path': reduced_data_path}
+    #
+    #     if file_full_path != '':
+    #         try:
+    #             raw_full_path = os.path.join(raw_data_path, file_full_path)
+    #             reduced_full_path = os.path.join(reduced_data_path, file_full_path)
+    #             full_path = next(path for path in [raw_full_path, reduced_full_path] if os.path.isfile(path))
+    #
+    #             master_flat_file = find_matching_calibration(
+    #                 full_path=full_path,
+    #                 calibration_type='FLAT',
+    #                 search_path=reduced_data_path)
+    #
+    #             response_payload['master_flats'] = master_flat_file
+    #
+    #             return Response(response_payload)
+    #         except FileNotFoundError as error:
+    #             response_payload['error'] = str(error)
+    #             return Response(response_payload,
+    #                             status=status.HTTP_404_NOT_FOUND)
+    #         except StopIteration:
+    #             response_payload['error'] = 'File {} does not exist' \
+    #                                              ''.format(file_full_path)
+    #             return Response(response_payload)
+    #
+    #     else:
+    #         all_flats = auto_discover_files(full_path=reduced_data_path,
+    #                                         file_type='FLAT')
+    #         response_payload['master_flats'] = all_flats
+    #         return Response(response_payload)
 
     def post(self, request):
+        response_payload = copy.deepcopy(self.response_payload)
         auto_discover = request.data.get('auto_discover')
-        saturation_threshold = request.data.get('saturation_threshold')
         raw_data_path = request.data.get('raw_data_path')
         reduced_data_path = request.data.get('reduced_data_path')
         overscan_region = request.data.get('overscan_region')
         trim_section = request.data.get('trim_section')
-        normalize_method = request.data.get('normalize_method', 'simple')
-        polynomial_order = request.data.get('polynomial_order', 15)
+        master_bias_file = request.data.get('master_bias_file')
+        file_list = request.data.get('file_list')
+        technique = request.data.get('technique')
+        settings = request.data.get('settings')
 
-        response_payload = {'api_version': __version__,
-                            'pipeline_version': goodman_pipeline.__version__}
+        flat_normalization = settings['flat_normalization']
+        flat_normalization_order = settings['flat_normalization_order']
+        saturation_threshold = settings['saturation_threshold']
+        ignore_bias = settings['ignore_bias']
 
-        ignore_bias = request.data.get('ignore_bias')
-        if ignore_bias == 'false':
-            ignore_bias = False
-        elif ignore_bias == 'true':
-            ignore_bias = True
+        response_payload['request_data'] = {
+            'auto_discover': auto_discover,
+            'raw_data_path': raw_data_path,
+            'reduced_data_path': reduced_data_path,
+            'overscan_region' : overscan_region,
+            'trim_section': trim_section,
+            'master_bias_file': master_bias_file,
+            'file_list': file_list,
+            'technique': technique,
+            'settings': settings
+        }
 
+        log.debug("Master Bias File: {}".format(master_bias_file))
         if not ignore_bias:
-            master_bias_name = request.data.get('master_bias')
-            if not os.path.exists(os.path.join(reduced_data_path,
-                                               master_bias_name)):
+            if master_bias_file is None:
+                response_payload['error'] = 'Must provide a master_bias_' \
+                                            'file or set ignore_bias to False'
+                log.error(response_payload['error'])
+                return Response(response_payload,
+                                status=status.HTTP_400_BAD_REQUEST)
+            elif not os.path.isfile(master_bias_file) or not os.path.exists(master_bias_file):
                 response_payload['error'] = "Unable to locate master bias file "\
-                                            "{}".format(master_bias_name)
+                                            "{}".format(master_bias_file)
+                log.error(response_payload['error'])
                 return Response(response_payload,
                                 status=status.HTTP_404_NOT_FOUND)
         else:
-            master_bias_name = ''
-
-        if auto_discover == 'true':
-            all_files = auto_discover_files(full_path=raw_data_path,
+            log.warning('Ignore bias set to {}'.format(ignore_bias))
+            master_bias_file = ''
+        if auto_discover:
+            file_list = auto_discover_files(full_path=raw_data_path,
                                             file_type='FLAT')
-        else:
-            all_files = request.data.get('file_list')
-
         all_flats = []
-        for _file_list in all_files:
+        for sub_list in file_list:
             sample_file = os.path.join(raw_data_path,
-                                       _file_list[0])
+                                       sub_list[0])
 
             if overscan_region == "":
                 overscan_region = get_overscan_region(sample_image=sample_file,
-                                                      technique='Spectroscopy')
+                                                      technique=technique)
                 response_payload['overscan_region'] = overscan_region
             if trim_section == "":
                 trim_section = define_trim_section(sample_image=sample_file,
-                                                   technique='Spectroscopy')
+                                                   technique=technique)
                 response_payload['trim_section'] = trim_section
 
             file_header = fits.getheader(sample_file)
 
-            new_master_flat_name = "master_flat_{}_{}.fits".format(
-                re.sub(' ', '_', file_header['WAVMODE']),
-                re.sub('[<> ]', '', file_header['FILTER2']))
+            if technique == 'Spectroscopy':
+                new_master_flat_name = "master_flat_{}_{}.fits".format(
+                    re.sub(' ', '_', file_header['WAVMODE']),
+                    re.sub('[<> ]', '', file_header['FILTER2']))
+            else:
+                new_master_flat_name = "master_flat_{}_{}.fits".format(
+                    re.sub(' ', '_', file_header['WAVMODE']),
+                    re.sub('[<> ]', '', file_header['FILTER']))
+
 
             try:
                 master_flat, master_flat_name = create_master_flats(
-                    flat_files=_file_list,
+                    flat_files=sub_list,
                     raw_data=raw_data_path,
                     reduced_data=reduced_data_path,
-                    technique="Spectroscopy",
+                    technique=technique,
                     overscan_region=overscan_region,
                     trim_section=trim_section,
-                    master_bias_name=master_bias_name,
+                    master_bias_name=master_bias_file,
                     new_master_flat_name=new_master_flat_name,
                     saturation=saturation_threshold,
                     ignore_bias=ignore_bias)
 
-                norm_master,  norm_master_name = normalize_master_flat(
-                    master=master_flat,
-                    name=master_flat_name,
-                    method=normalize_method,
-                    order=int(polynomial_order))
+                if technique == 'Spectroscopy':
+                    log.info("Normalizing {} flat by method: {}".format(
+                        technique, flat_normalization))
+                    norm_master,  norm_master_name = normalize_master_flat(
+                        master=master_flat,
+                        name=master_flat_name,
+                        method=flat_normalization,
+                        order=int(flat_normalization_order))
+                else:
+                    log.info("Normalizing {} flat by method: {}".format(
+                        technique, 'mean'))
+                    norm_master,  norm_master_name = normalize_master_flat(
+                        master=master_flat,
+                        name=master_flat_name,
+                        method='mean',
+                        order=int(flat_normalization_order))
 
-                entry_name = re.sub('.fits', '',
-                                    os.path.basename(master_flat_name))
-                all_flats.append(
-                    {entry_name: {
-                        'master_flat': os.path.basename(master_flat_name),
-                        'norm_master_flat': os.path.basename(norm_master_name),
-                        'full_path': os.path.dirname(master_flat_name),
-                        'file_list': _file_list}})
+                all_flats.append({
+                    'parent_file': os.path.basename(master_flat_name),
+                    'file_name': os.path.basename(master_flat_name),
+                    'full_path': master_flat_name,
+                    'normalized': False,
+                    'file_list': sub_list
+                    })
+                all_flats.append({
+                    'parent_file': os.path.basename(master_flat_name),
+                    'file_name': os.path.basename(norm_master_name),
+                    'full_path': norm_master_name,
+                    'normalized': True,
+                    'file_list': sub_list
+                    })
+
+                response_payload['master_flats'] = all_flats
+                return Response(response_payload)
             except ValueError as error:
                 response_payload['error'] = str(error)
+                log.error(response_payload['error'])
+            except TypeError as error:
+                response_payload['error'] = str(error)
+                log.error(response_payload['error'])
+
+            finally:
                 return Response(response_payload)
 
-        response_payload['master_flat'] = all_flats
-        return Response(response_payload)
+
 
 
 
@@ -604,42 +676,30 @@ class ApiImageBiasView(APIView):
             if not os.path.exists(full_path) or not os.path.isfile(full_path):
                 return Response(
                     {'error': 'file {} does not exist'.format(parent_file)})
-            if master_bias_file == '':
-                try:
-                    master_bias_file = find_matching_calibration(
-                        full_path=full_path,
-                        calibration_type='BIAS',
-                        search_path=reduced_data_path)
-                    master_bias = read_fits(
-                        full_path=os.path.join(
-                            reduced_data_path,
-                            master_bias_file),
-                        technique='Spectroscopy')
+            if os.path.isabs(master_bias_file) and os.path.isfile(master_bias_file):
+                master_bias = read_fits(full_path=master_bias_file,
+                                        technique='Spectroscopy')
 
-                    ccd = read_fits(full_path=full_path,
-                                    technique='Spectroscopy')
+                ccd = read_fits(full_path=full_path,
+                                technique='Spectroscopy')
 
-                    bias_corrected = ccdproc.subtract_bias(ccd=ccd,
-                                                           master=master_bias,
-                                                           add_keyword=False)
-                    bias_corrected_name = "z{}".format(parent_file)
+                bias_corrected = ccdproc.subtract_bias(ccd=ccd,
+                                                       master=master_bias,
+                                                       add_keyword=False)
+                bias_corrected_name = "z{}".format(parent_file)
 
-                    bias_corrected.header.set('GSP_PNAM', value=parent_file)
-                    bias_corrected.header.set('GSP_FNAM', value=bias_corrected_name)
-                    bias_corrected.header.set('GSP_BIAS', value=master_bias_file)
+                bias_corrected.header.set('GSP_PNAM', value=parent_file)
+                bias_corrected.header.set('GSP_FNAM', value=bias_corrected_name)
+                bias_corrected.header.set('GSP_BIAS', value=master_bias_file)
 
-                    bias_corrected.write(os.path.join(reduced_data_path,
-                                                      bias_corrected_name),
-                                         overwrite=True)
+                bias_corrected.write(os.path.join(reduced_data_path,
+                                                  bias_corrected_name),
+                                     overwrite=True)
 
-                    return Response({'api_version': __version__,
-                             'pipeline_version': goodman_pipeline.__version__,'master_bias': master_bias_file,
-                                     'bias_corrected': bias_corrected_name})
-                except FileNotFoundError:
-                    return Response({'api_version': __version__,
-                             'pipeline_version': goodman_pipeline.__version__,
-                        'error': "Unable to find a suitable master "
-                                 "bias for file {}".format(parent_file)})
+                return Response({'api_version': __version__,
+                         'pipeline_version': goodman_pipeline.__version__,'master_bias': master_bias_file,
+                                 'bias_corrected': bias_corrected_name})
+
             elif not os.path.exists(os.path.join(reduced_data_path,
                                                  master_bias_file)):
                 return Response({'api_version': __version__,
@@ -727,96 +787,149 @@ class ApiImageFlatView(APIView):
 
 class ApiImageCrejectView(APIView):
 
-    def get(self, request):
-        return Response({'api_version': __version__,
-                         'pipeline_version': goodman_pipeline.__version__,
-                         'error': 'not implemented'})
-
     def post(self, request):
-        parent_file = request.data.get('file', '')
-        if parent_file == '':
-            return Response({'api_version': __version__,
-                             'pipeline_version': goodman_pipeline.__version__,
-                             'error': 'Must provide a valid file name'})
+        response_payload = {'api_version': __version__,
+                            'pipeline_version': goodman_pipeline.__version__,
+                            'error': '',
+                            'request_data': {},
+                            'crejected': ''}
 
+        filename = request.data.get('filename', '')
+        raw_data_path = request.data.get('raw_data_path')
         reduced_data_path = request.data.get('reduced_data_path')
         method = request.data.get('method', 'default')
+        technique = request.data.get('technique', 'Spectroscopy')
 
-        if os.path.exists(reduced_data_path) and os.path.isdir(
-                reduced_data_path):
-            full_path = os.path.join(reduced_data_path, parent_file)
+        response_payload['request_data'] = {
+            'filename': filename,
+            'raw_data_path': raw_data_path,
+            'reduced_data_path': reduced_data_path,
+            'method': method,
+            'technique': technique
+        }
+
+        if filename != '':
+            raw_full_path = os.path.join(raw_data_path, filename)
+            reduced_full_path = os.path.join(reduced_data_path, filename)
+
+            full_path = next(path for path in [raw_full_path, reduced_full_path] if os.path.isfile(path))
             if not os.path.exists(full_path) or not os.path.isfile(full_path):
-                return Response(
-                    {'api_version': __version__,
-                     'pipeline_version': goodman_pipeline.__version__,
-                     'error': 'file {} does not exist'.format(parent_file)})
+                response_payload['error'] = 'file {} does not exist'.format(filename)
+                return Response(response_payload,
+                                status=status.HTTP_404_NOT_FOUND)
 
-            ccd = read_fits(full_path=full_path, technique='Spectroscopy')
+            ccd = read_fits(full_path=full_path, technique=technique)
 
-            ccd, astroscrappy_lacosmic(
+            ccd, _ = call_cosmic_rejection(
                 ccd=ccd,
+                image_name=filename,
+                out_prefix='',
                 red_path=reduced_data_path,
-                save_mask=False)
+                keep_files=False,
+                prefix='c',
+                method=method,
+                save=False)
 
-            new_file_name = "c{}".format(parent_file)
+            new_file_name = "c{}".format(filename)
             full_path = os.path.join(reduced_data_path, new_file_name)
 
             write_fits(ccd=ccd, full_path=full_path)
+            response_payload['crejected'] = os.path.basename(full_path)
 
-            return Response({'api_version': __version__,
-                             'pipeline_version': goodman_pipeline.__version__,'crejected': os.path.basename(full_path)})
+            return Response(response_payload)
 
         else:
-            return Response({'api_version': __version__,
-                             'pipeline_version': goodman_pipeline.__version__,
-                'error': 'folder {} does not exist'.format(
-                    reduced_data_path)})
+            response_payload['error'] = 'Must provide a valid file name'
+            return Response(response_payload,
+                            status=status.HTTP_400_BAD_REQUEST)
 
 
 class ApiImageReduceView(APIView):
 
     def post(self, request):
-        file_name = request.data.get('file', '')
-        if file_name == '':
-            return Response({'api_version': __version__,
-                             'pipeline_version': goodman_pipeline.__version__,
-                             'error': 'please provide a valid file name.'})
-        raw_data_path = request.data.get('raw_data_path')
+        response_payload = {'api_version': __version__,
+                            'pipeline_version': goodman_pipeline.__version__,
+                            'error': '',
+                            'request_data': {}}
+
+        file_full_path = request.data.get('file_full_path', '')
         reduced_data_path = request.data.get('reduced_data_path')
-        technique = request.data.get('technique', 'Spectroscopy')
+        master_bias_file = request.data.get('master_bias_file', '')
+        master_flat_file = request.data.get('master_flat_file', '')
+        technique = request.data.get('technique')
+        settings = request.data.get('settings')
 
-        if not os.path.exists(raw_data_path) or not os.path.isdir(raw_data_path):
-            return Response({'api_version': __version__,
-                             'pipeline_version': goodman_pipeline.__version__,
-                             'error': 'raw_data_path does not exist or is '
-                                      'not a directory'})
+        cosmic_ray_rejection = settings['cosmic_ray_rejection']
+        ignore_bias = settings['ignore_bias']
+        ignore_flats = settings['ignore_flats']
+
+        response_payload['request_data'] = {
+            'file_full_path': file_full_path,
+            'reduced_data_path': reduced_data_path,
+            'master_bias_file': master_bias_file,
+            'master_flat_file': master_flat_file,
+            'technique': technique,
+            'setttings': settings
+        }
+        if file_full_path == '' or not os.path.isabs(file_full_path):
+            response_payload['error'] = 'please provide a full path to file'
+            log.error(response_payload['error'])
+            return Response(response_payload,
+                            status=status.HTTP_400_BAD_REQUEST)
+
         if not os.path.exists(reduced_data_path) or not os.path.isdir(reduced_data_path):
-            return Response({'api_version': __version__,
-                             'pipeline_version': goodman_pipeline.__version__,
-                             'error': 'reduced_data_path does not exist or is '
-                                      'not a directory'})
+            response_payload['error'] = 'reduced_data_path does not exist or ' \
+                                        'is not a directory'
+            log.error(response_payload['error'])
+            return Response(response_payload,
+                            status=status.HTTP_400_BAD_REQUEST)
 
-        full_path = os.path.join(raw_data_path, file_name)
+        if not os.path.exists(file_full_path) or not os.path.isfile(file_full_path):
+            response_payload['error'] = "{} does not exist in raw_data_path or " \
+                                        "is not a file".format(file_full_path)
+            log.error(response_payload['error'])
+            return Response(response_payload,
+                            status=status.HTTP_400_BAD_REQUEST)
 
-        if not os.path.exists(full_path) or not os.path.isfile(full_path):
-            return Response({'api_version': __version__,
-                             'pipeline_version': goodman_pipeline.__version__,
-                             'error': "{} does not exist in raw_data_path or "
-                                      "is not a file".format(file_name)})
+        if not os.path.isabs(master_bias_file) or not os.path.isfile(master_bias_file):
+            response_payload['error'] = "Must provide an absolute path for master_bias_file"
+            log.error(response_payload['error'])
+            return Response(response_payload,
+                            status=status.HTTP_400_BAD_REQUEST)
 
-        overscan_region = get_overscan_region(sample_image=full_path,
+        if not os.path.isabs(master_flat_file) or not os.path.isfile(master_flat_file):
+            response_payload['error'] = "Must provide an absolute path for master_flat_file"
+            log.error(response_payload['error'])
+            return Response(response_payload,
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        overscan_region = get_overscan_region(sample_image=file_full_path,
                                               technique=technique)
 
-        trim_section = define_trim_section(sample_image=full_path,
+        trim_section = define_trim_section(sample_image=file_full_path,
                                            technique=technique)
+        slit_trim_section = None
+        if not ignore_flats:
+            log.debug("Reading Master Flat File {}".format(master_flat_file))
+            master_flat = read_fits(full_path=master_flat_file, technique=technique)
 
-        try:
-            master_bias_name = find_matching_calibration(
-                full_path=full_path,
-                calibration_type='BIAS',
-                search_path=reduced_data_path)
-            master_bias = read_fits(full_path=os.path.join(reduced_data_path,
-                                                           master_bias_name),
+            master_flat = image_trim(ccd=master_flat,
+                                     trim_section=trim_section,
+                                     trim_type='trimsec',
+                                     add_keyword=False)
+
+            slit_trim_section = get_slit_trim_section(master_flat=master_flat)
+
+            master_flat = image_trim(ccd=master_flat,
+                                     trim_section=slit_trim_section,
+                                     trim_type='slit',
+                                     add_keyword=False)
+        else:
+            master_flat = None
+
+        if not ignore_bias:
+            log.debug("Reading Master Bias File {}".format(master_bias_file))
+            master_bias = read_fits(full_path=master_bias_file,
                                     technique=technique)
 
             master_bias = image_trim(ccd=master_bias,
@@ -824,52 +937,26 @@ class ApiImageReduceView(APIView):
                                      trim_type='trimsec',
                                      add_keyword=False)
 
-        except FileNotFoundError:
-            return Response({'api_version': __version__,
-                             'pipeline_version': goodman_pipeline.__version__,
-                             'error': 'Master bias not found for file '
-                                      '{}'.format(file_name)})
-
-        try:
-            master_flat_name = find_matching_calibration(
-                full_path=full_path,
-                calibration_type='FLAT',
-                search_path=reduced_data_path)
-            master_flat = read_fits(full_path=os.path.join(reduced_data_path,
-                                                           master_flat_name),
-                                    technique=technique)
-
-            master_flat = image_trim(ccd=master_flat,
-                                     trim_section=trim_section,
-                                     trim_type='trimsec',
-                                     add_keyword=False)
-
-        except FileNotFoundError:
-            return Response({'api_version': __version__,
-                             'pipeline_version': goodman_pipeline.__version__,
-                             'error': 'Master flat not found for file '
-                                      '{}'.format(file_name)})
-
-        slit_trim_section = get_slit_trim_section(master_flat=master_flat)
-
-        master_bias = image_trim(ccd=master_bias,
-                                 trim_section=slit_trim_section,
-                                 trim_type='slit',
-                                 add_keyword=False)
-
-        master_flat = image_trim(ccd=master_flat,
-                                 trim_section=slit_trim_section,
-                                 trim_type='slit',
-                                 add_keyword=False)
+            if slit_trim_section is not None:
+                master_bias = image_trim(ccd=master_bias,
+                                         trim_section=slit_trim_section,
+                                         trim_type='slit',
+                                         add_keyword=False)
+        else:
+            master_bias = None
 
         prefix = '_'
 
-        ccd = read_fits(full_path=full_path, technique=technique)
+        ccd = read_fits(full_path=file_full_path, technique=technique)
 
-        ccd = image_overscan(ccd=ccd,
-                             overscan_region=overscan_region,
-                             add_keyword=False)
-        prefix = 'o' + prefix
+        log.info("Raw: Mean {}".format(np.mean(ccd.data)))
+
+        if ignore_bias:
+            ccd = image_overscan(ccd=ccd,
+                                 overscan_region=overscan_region,
+                                 add_keyword=False)
+            prefix = 'o' + prefix
+            log.info("Overscan: Mean {}".format(np.mean(ccd.data)))
 
         # save intermediate?
 
@@ -878,93 +965,137 @@ class ApiImageReduceView(APIView):
                          trim_type='trimsec')
         prefix = 't' + prefix
 
-        ccd = image_trim(ccd=ccd,
-                         trim_section=slit_trim_section,
-                         trim_type='slit')
+        log.info("Trim (trimsec): Mean {}".format(np.mean(ccd.data)))
 
-        prefix = 's' + prefix
+        if slit_trim_section is not None:
+            ccd = image_trim(ccd=ccd,
+                             trim_section=slit_trim_section,
+                             trim_type='slit')
+            log.info("Trim (slit): Mean {}".format(np.mean(ccd.data)))
 
-        ccd = ccdproc.subtract_bias(ccd=ccd,
-                                    master=master_bias,
-                                    add_keyword=False)
+            prefix = 's' + prefix
 
-        prefix = 'z' + prefix
+        if not ignore_bias:
+            print(ccd.data.shape, master_bias.data.shape)
+            ccd = ccdproc.subtract_bias(ccd=ccd,
+                                        master=master_bias,
+                                        add_keyword=False)
+            log.info("Bias: Mean {}".format(np.mean(ccd.data)))
+            ccd.header.set('GSP_BIAS',
+                           value=os.path.basename(master_bias_file))
 
-        ccd = ccdproc.flat_correct(ccd=ccd,
-                                   flat=master_flat,
-                                   add_keyword=False)
+            prefix = 'z' + prefix
 
-        prefix = 'f' + prefix
+        if not ignore_flats:
+            ccd = ccdproc.flat_correct(ccd=ccd,
+                                       flat=master_flat,
+                                       add_keyword=False)
+            log.info("Flat: Mean {}".format(np.mean(ccd.data)))
+            ccd.header.set('GSP_FLAT', value=os.path.basename(master_flat_file))
 
-        ccd = astroscrappy_lacosmic(ccd=ccd,
-                                    red_path=reduced_data_path,
-                                    save_mask=False)
+            prefix = 'f' + prefix
 
+        ccd, _ = call_cosmic_rejection(
+            ccd=ccd,
+            image_name=os.path.basename(file_full_path),
+            out_prefix='staged_',
+            red_path=reduced_data_path,
+            keep_files=False,
+            prefix='c',
+            method=cosmic_ray_rejection,
+            save=False)
+        log.info("C Reject: Mean {}".format(np.mean(ccd.data)))
         prefix = 'c' + prefix
 
-
-        new_name = prefix + file_name
+        new_name = prefix + os.path.basename(file_full_path)
         new_full_path = os.path.join(reduced_data_path, new_name)
 
-        ccd.write(new_full_path, overwrite=True)
+        write_fits(ccd=ccd,
+                   full_path=new_full_path,
+                   parent_file=os.path.basename(file_full_path))
 
-        return Response({'api_version': __version__,
-                         'pipeline_version': goodman_pipeline.__version__,
-                         'overscan_region': overscan_region,
-                         'trim_section': trim_section,
-                         'slit_trim_section': slit_trim_section,
-                         'master_bias': master_bias_name,
-                         'master_flat': master_flat_name,
-                         'reduced': new_name})
+        # ccd.write(new_full_path, overwrite=True)
+
+        response_payload['overscan_region'] = overscan_region
+        response_payload['trim_section'] = trim_section
+        response_payload['slit_trim_section'] = slit_trim_section
+        response_payload['master_bias'] = master_bias_file
+        response_payload['master_flat'] = master_flat_file
+        response_payload['full_path'] = new_full_path
+        response_payload['file_name'] = new_name
+
+        return Response(response_payload)
 
 
-class ApiSpectrumReduceView(APIView):
+class ApiSpectrumExtractView(APIView):
 
     def post(self, request):
-        response = {}
-        file_name = request.data.get('file', '')
-        if file_name == '':
-            return Response({'api_version': __version__,
-                             'pipeline_version': goodman_pipeline.__version__,
-                             'error': 'please provide a valid file name.'})
-        data_path = request.data.get('data_path')
+        full_path = request.data.get('file_full_path', '')
+        reduced_data_path = request.data.get('reduced_data_path',
+                                             os.path.dirname(full_path))
+        reference_lamps = request.data.get('reference_lamps', [])
 
-        reference_lamp = request.data.get('reference_lamp')
-        if reference_lamp == '':
-            response['warning'] = 'Reference lamp not provided'
-
-        fit_model = request.data.get('fit_model', 'moffat')
-        background_threshold = request.data.get('background_threshold', 1)
-        max_identify = request.data.get('max_identify', 3)
-        extraction_type = request.data.get('extraction_type', 'fractional')
+        reduction_settings = request.data.get('settings')
+        target_fit_model = reduction_settings['target_fit_model']
+        background_threshold = reduction_settings['background_threshold']
+        max_targets = reduction_settings['max_targets']
+        extraction_type = reduction_settings['extraction_type']
         technique = 'Spectroscopy'
 
-        if not os.path.exists(data_path) or not os.path.isdir(
-                data_path):
-            return Response({'api_version': __version__,
-                             'pipeline_version': goodman_pipeline.__version__,
-                             'error': 'data_path: {} does not exist or is '
-                                      'not a directory'.format(data_path)})
+        response_payload = {'api_version': __version__,
+                            'pipeline_version': goodman_pipeline.__version__,
+                            'request_data':
+                                {'file_full_path': full_path,
+                                 'reduced_data_path': reduced_data_path,
+                                 'reference_lamps': reference_lamps,
+                                 'target_fit_model': target_fit_model,
+                                 'background_threshold': background_threshold,
+                                 'max_targets': max_targets,
+                                 'extraction_type': extraction_type,
+                                 'technique': technique
+                                 },
+                            'error': ''}
 
-        full_path = os.path.join(data_path, file_name)
+        if not os.path.isfile(full_path) or not os.path.exists(full_path):
+            response_payload['error'] = 'Unable to find file {}'.format(full_path)
+            log.critical(response_payload['error'])
+            return Response(response_payload, status=status.HTTP_404_NOT_FOUND)
 
-        if not os.path.exists(full_path) or not os.path.isfile(full_path):
-            return Response({'api_version': __version__,
-                             'pipeline_version': goodman_pipeline.__version__,
-                             'error': "{} does not exist in raw_data_path or "
-                                      "is not a file".format(file_name)})
+        if isinstance(reference_lamps, list):
+            for _file in reference_lamps:
+                if not os.path.isfile(_file) or not os.path.exists(_file):
+                    response_payload['error'] = 'Unable to locate reference ' \
+                                                'lamp file {}'.format(_file)
+                    log.critical(response_payload['error'])
+                    return Response(response_payload, status=status.HTTP_404_NOT_FOUND)
+        else:
+            response_payload['error'] = "reference_lamps must be a list"
+            return Response(response_payload,
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if not os.path.exists(reduced_data_path) or not os.path.isdir(
+                reduced_data_path):
+            response_payload['error'] = 'data_path: {} does not exist or is ' \
+                                        'not a directory'.format(reduced_data_path)
+            log.critical(response_payload['error'])
+            return Response(response_payload, status=status.HTTP_400_BAD_REQUEST)
 
         ccd = read_fits(full_path=full_path, technique=technique)
+        try:
+            targets = identify_targets(ccd=ccd,
+                                       fit_model=target_fit_model,
+                                       background_threshold=int(background_threshold),
+                                       nfind=int(max_targets))
 
-        targets = identify_targets(ccd=ccd,
-                                   fit_model=fit_model,
-                                   background_threshold=background_threshold,
-                                   nfind=max_identify)
+        except Exception as error:
+            response_payload['error'] = '{}: {}'.format(
+                error.__class__.__name__, str(error))
+            log.error(response_payload['error'])
+            return Response(response_payload, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         if len(targets) == 0:
-            return Response({'api_version': __version__,
-                             'pipeline_version': goodman_pipeline.__version__,
-                             'error': 'Unable to identify targets in '
-                                      '{}'.format(file_name)})
+            response_payload['error'] = 'Unable to identify targets in {}'.format(full_path)
+            log.error(response_payload['error'])
+            return Response(response_payload)
 
         traces = trace_targets(ccd=ccd,
                                target_list=targets,
@@ -974,6 +1105,7 @@ class ApiSpectrumReduceView(APIView):
                                plots=False)
 
         i = 1
+        all_targets = []
         for trace, profile, trace_info in traces:
 
             ccd = add_trace_info(ccd=ccd, trace_info=trace_info)
@@ -986,246 +1118,114 @@ class ApiSpectrumReduceView(APIView):
             new_file_name = "e{}".format(
                 re.sub('.fits',
                        '_{}.fits'.format(int(trace.c0.value)),
-                       file_name))
+                       os.path.basename(full_path)))
 
-            new_full_path = os.path.join(data_path, new_file_name)
+            new_full_path = os.path.join(reduced_data_path, new_file_name)
             write_fits(ccd=extracted_ccd,
                        full_path=new_full_path,
                        combined=False,
-                       parent_file=file_name,
+                       parent_file=full_path,
                        overwrite=True)
 
-            response[target_name] = {'target_center': trace.c0.value,
-                                     'file_name': new_file_name,
-                                     'trace_rms_error': trace_info['GSP_TERR'][0]}
-            lamp_full_path = os.path.join(data_path, reference_lamp)
+            this_target = {'target_center': trace.c0.value,
+                           'file_full_path': new_full_path,
+                           'reference_lamps':[],
+                           'trace_rms_error': trace_info['GSP_TERR'][0]}
 
-            if os.path.exists(lamp_full_path) and os.path.isfile(lamp_full_path):
-                lamp_ccd = read_fits(full_path=lamp_full_path,
-                                     technique=technique)
-                lamp_ccd = add_trace_info(ccd=lamp_ccd,
-                                          trace_info=trace_info)
 
-                extracted_lamp = extraction(ccd=lamp_ccd,
-                                            target_trace=trace,
-                                            spatial_profile=profile,
-                                            extraction_name=extraction_type)
 
-                new_lamp_name = "e{}".format(
-                    re.sub('.fits',
-                           '_{}.fits'.format(int(trace.c0.value)),
-                           reference_lamp))
+            for reference_lamp in reference_lamps:
+                log.info(reference_lamp)
+                if os.path.exists(reference_lamp) and os.path.isfile(reference_lamp):
+                    lamp_ccd = read_fits(full_path=reference_lamp,
+                                         technique=technique)
+                    lamp_ccd = add_trace_info(ccd=lamp_ccd,
+                                              trace_info=trace_info)
 
-                new_lamp_full_path = os.path.join(data_path, new_lamp_name)
-                write_fits(ccd=extracted_lamp,
-                           full_path=new_lamp_full_path,
-                           combined=False,
-                           parent_file=reference_lamp,
-                           overwrite=True)
+                    extracted_lamp = extraction(ccd=lamp_ccd,
+                                                target_trace=trace,
+                                                spatial_profile=profile,
+                                                extraction_name=extraction_type)
 
-                response[target_name]['reference_lamp'] = new_lamp_name
+                    new_lamp_name = "e{}".format(
+                        re.sub('.fits',
+                               '_{}.fits'.format(int(trace.c0.value)),
+                               os.path.basename(reference_lamp)))
 
-            else:
-                response['error'] = 'Reference Lamp does not exist or is ' \
-                                    'not a file'
+                    new_lamp_full_path = os.path.join(reduced_data_path, new_lamp_name)
+                    write_fits(ccd=extracted_lamp,
+                               full_path=new_lamp_full_path,
+                               combined=False,
+                               parent_file=reference_lamp,
+                               overwrite=True)
 
-        return Response(response)
+                    this_target['reference_lamps'].append(new_lamp_full_path)
+
+
+                else:
+                    response_payload['error'] = 'Reference Lamp does not exist or is ' \
+                                        'not a file'
+            all_targets.append(this_target)
+        response_payload['targets'] = all_targets
+
+        return Response(response_payload)
 
 
 class ApiSpectrumCalibrateView(APIView):
 
     def post(self, request):
-        file_name = request.data.get('file', '')
-        if file_name == '':
-            return Response({'api_version': __version__,
-                             'pipeline_version': goodman_pipeline.__version__,
-                             'error': 'please provide a valid file name.'})
-
-        reference_lamp = request.data.get('reference_lamp')
-        if reference_lamp == '':
-            return Response({'api_version': __version__,
-                             'pipeline_version': goodman_pipeline.__version__,
-                             'error': 'Reference lamp file not provided'})
-
-        data_path = request.data.get('data_path')
-        if not os.path.exists(data_path) or not os.path.isdir(
-                data_path):
-            return Response({'api_version': __version__,
-                             'pipeline_version': goodman_pipeline.__version__,
-                             'error': 'data_path: {} does not exist or is '
-                                      'not a directory'.format(data_path)})
+        science_file = request.data.get('science_file', '')
+        reference_lamps = request.data.get('reference_lamps', list())
+        reduced_data_path = request.data.get('reduced_data_path')
         correlation_tolerance = request.data.get('correlation_tolerance', 15)
+        technique = 'Spectroscopy'
 
-        file_full_path = os.path.join(data_path, file_name)
-        if not os.path.exists(file_full_path) or not os.path.isfile(file_full_path):
-            return Response({'api_version': __version__,
-                             'pipeline_version': goodman_pipeline.__version__,
-                             'error': 'File {} does not exist or is not an '
-                                      'actual file'.format(file_name)})
+        response_payload = {
+            'api_version': __version__,
+            'pipeline_version': goodman_pipeline.__version__,
+            'request_data': {
+                'science_file': science_file,
+                'reference_lamps': reference_lamps,
+                'correlation_tolerance': correlation_tolerance},
+            'technique': technique,
+            'error': ''
+        }
+        all_files = copy.deepcopy(reference_lamps)
+        all_files.append(science_file)
+        for _file in all_files:
+            if not os.path.isfile(_file) or not os.path.exists(_file):
+                response_payload['error'] = "File {} does not exist".format(science_file)
+                log.error(response_payload['error'])
+                return Response(response_payload,
+                                status=status.HTTP_404_NOT_FOUND)
 
-        lamp_full_path = os.path.join(data_path, reference_lamp)
-        if not os.path.exists(lamp_full_path) or not os.path.isfile(lamp_full_path):
-            return Response({'api_version': __version__,
-                             'pipeline_version': goodman_pipeline.__version__,
-                             'error': "Reference lamp {} does not exist or is "
-                                      "not a file".format(reference_lamp)})
+        if not os.path.exists(reduced_data_path) or not os.path.isdir(
+                reduced_data_path):
+            response_payload['error'] = 'reduced_data_path: {} does not exist or is '\
+                                        'not a directory'.format(reduced_data_path)
+            return Response(response_payload, status=status.HTTP_400_BAD_REQUEST)
+
         wavelength_calibration = WavelengthCalibration()
+
 
         pipeline_path = os.path.dirname(goodman_pipeline.__file__)
         reference_data_path = os.path.join(pipeline_path, 'data/ref_comp')
 
-        ccd = read_fits(full_path=file_full_path, technique='Spectroscopy')
-        lamp = read_fits(full_path=lamp_full_path, technique='Spectroscopy')
+        ccd = read_fits(full_path=science_file, technique=technique)
+        lamps = [read_fits(full_path=reference_lamp, technique=technique) for reference_lamp in reference_lamps]
         try:
             wavelength_solution = wavelength_calibration(
                 ccd=ccd,
-                comp_list=[lamp],
-                save_data_to=data_path,
+                comp_list=lamps,
+                save_data_to=reduced_data_path,
                 reference_data=reference_data_path,
                 object_number=1,
                 corr_tolerance=float(correlation_tolerance),
                 plot_results=False,
                 json_output=True)
-            return Response({'api_version': __version__,
-                             'pipeline_version': goodman_pipeline.__version__,
-                             'solution': wavelength_solution})
+            response_payload['solution'] = wavelength_solution
+            return Response(response_payload)
 
         except NoMatchFound as error:
-            return Response({'api_version': __version__,
-                             'pipeline_version': goodman_pipeline.__version__,
-                             'error': str(error)})
-
-# def api_view(request):
-#     return render(request=request, template_name='api/api.html')
-
-
-# class FilesView(ApiView):
-# 
-#     permission_classes = (IsAuthenticated,)
-# 
-#     def get(self, request):
-# 
-#         auth_token = request.headers['Authorization']
-# 
-#         settings = ApiSettings.objects.all()[0]
-#         
-#         files_in_record = ObservedFile.objects.all().values_list('file_name',
-#                                                                 flat=True)
-# 
-#         print(files_in_record)
-# 
-#         result = sorted(glob.glob(os.path.join(settings.data_path,
-#                                                settings.file_pattern)))
-# 
-#         file_list = [os.path.basename(_file) for _file in result]
-# 
-#         new_files = [_file for _file in file_list if _file not in files_in_record]
-#         missing_files = [_file for _file in files_in_record if _file not in file_list]
-# 
-#         if new_files != []:
-#             for _file in new_files:
-#                 header_response = requests.get(
-#                     'http://localhost:8000/api/files/header/',
-#                     params={'filename': _file},
-#                     headers={'Authorization': auth_token})
-#                 header_data = json.loads(header_response.text)
-#                 header = header_data['header']
-# 
-#                 _f = ObservedFile(file_name=_file,
-#                                   object=header['OBJECT'],
-#                                   obs_date=header['DATE'],
-#                                   obs_time=header['DATE-OBS'])
-#                 _f.save()
-# 
-# 
-#         
-#         files_in_record = ObservedFile.objects.all().order_by('-id')
-# 
-# 
-#         all_files = []
-#         #
-#         for _file in files_in_record:
-#             res = dict({
-#                 'file_name': _file.file_name,
-#                 'object': _file.object,
-#                 'obs_date': _file.obs_date,
-#                 'obs_time': _file.obs_time
-#             })
-# 
-#             all_files.append(res)
-# 
-#         print(all_files)
-# 
-#         response_data = dict()
-# 
-#         response_data['data_path'] = settings.data_path
-#         response_data['file_pattern'] = settings.file_pattern
-#         # response_data['query_set'] = files_in_record
-#         response_data['file_list'] = file_list
-#         response_data['new_files'] = new_files
-#         response_data['missing_files'] = missing_files
-# 
-#         return Response(response_data)
-# 
-# 
-# class FileHeader(APIView):
-# 
-#     permission_classes = (IsAuthenticated,)
-# 
-#     def get(self, request):
-#         filename = request.GET.get('filename')
-#         response_data = dict({'filename': '',
-#                               'header': '',
-#                               'error': ''})
-# 
-#         if filename is None:
-#             response_data['error'] = "No filename querystring was provided"
-#         else:
-#             response_data['filename'] = filename
-#             settings = ApiSettings.objects.all()[0]
-# 
-#             if os.path.isfile(os.path.join(settings.data_path, filename)):
-#                 fits_header = fits.getheader(os.path.join(settings.data_path,
-#                                                           filename))
-# 
-#                 header = dict()
-# 
-#                 for key in fits_header.keys():
-#                     if key != '':
-#                         header[key] = str(fits_header[key])
-# 
-#                 response_data['header'] = header
-# 
-#             else:
-#                 response_data['error'] = 'File {:s} not found'.format(filename)
-# 
-#         return Response(response_data)
-# 
-# 
-# class FileVisualize(APIView):
-# 
-#     permission_classes = (IsAuthenticated,)
-# 
-#     def get(self, request):
-#         filename = request.GET.get('filename')
-# 
-#         response_data = dict({'filename': '',
-#                               'error': ''})
-# 
-#         if filename is None:
-#             response_data['error'] = "No filename querystring was provided"
-#         else:
-#             response_data['filename'] = filename
-#             settings = ApiSettings.objects.all()[0]
-#             if os.path.isfile(os.path.join(settings.data_path, filename)):
-#                 response_data['filename'] = filename
-# 
-#                 plot_file = _make_plot(full_path=os.path.join(settings.data_path,
-#                                                               filename),
-#                                        static_path='live/static/plots')
-#                 response_data['plot'] = plot_file
-# 
-#             else:
-#                 response_data['error'] = 'File {:s} not found'.format(filename)
-# 
-#         return Response(response_data)
+            response_payload['error'] = str(error)
+            return Response(response_payload)

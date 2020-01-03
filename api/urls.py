@@ -40,8 +40,8 @@ urlpatterns = [
          views.ApiImageReduceView.as_view(),
          name='image_reduce'),
 
-    path('spectrum/reduce/',
-         views.ApiSpectrumReduceView.as_view(),
+    path('spectrum/extract/',
+         views.ApiSpectrumExtractView.as_view(),
          name='image_reduce'),
 
     path('spectrum/calibrate/',
