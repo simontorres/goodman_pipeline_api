@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h1>Welcome to Goodman Pipeline API</h1>
+
+    <ul>
+    <li><a href="{% url 'api:files' %}">View a File List</a></li>
+    <li><a href="{% url 'api:add_file' %}">Add a file</a></li>
+    <li><a href="{% url 'api:fileheader'%}?filename=filename.fits">View a file's header</a></li>
+    <li><a href="{% url 'api:fileviz'%}?filename=filename.fits">Create image of file</a></li>
+    <li><a href="{% url 'api:updatedb' %}">Update Database</a></li>
+    <li><a href="{% url 'api:status' %}">Get API Status</a></li>
+    </ul>
+{% endblock %}

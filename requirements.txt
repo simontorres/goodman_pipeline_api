@@ -1,0 +1,11 @@
+numpy
+django
+channels
+channels_redis
+matplotlib
+astropy
+ccdproc==1.3.0.post1
+requests
+websocket-client
+djangorestframework
+goodman-pipeline==1.3.0.dev6
