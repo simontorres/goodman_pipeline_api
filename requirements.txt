@@ -1,5 +1,5 @@
 numpy
-django
+django==3.0
 channels
 channels_redis
 matplotlib
@@ -8,4 +8,4 @@ ccdproc==1.3.0.post1
 requests
 websocket-client
 djangorestframework
-goodman-pipeline==1.3.0.dev6
+goodman-pipeline==1.3.0.dev20
